@@ -31,6 +31,13 @@
 <div id="status">狀態：連線中…</div>
 
 <script>
+  // 沒有通過 login 就不允許進入 control
+  if (sessionStorage.getItem("authed") !== "1") {
+    location.href = "login.html";
+  } else {
+    // 立刻清掉，確保「每次都要輸密碼」
+    sessionStorage.removeItem("authed");
+  }
   // ====== MQTT 設定（下一步我會帶你改）======
   const client = mqtt.connect(
     "wss://eff983c75d384110b87c02b1020eeb9d.s1.eu.hivemq.cloud:8884/mqtt",
