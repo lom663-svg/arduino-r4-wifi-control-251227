@@ -10,15 +10,14 @@
   <button onclick="login()">Login</button>
 
   <script>
-    function login() {
-      const pw = document.getElementById("pw").value;
+   function login() {
+    const pw = document.getElementById("pw").value;
 
-      if (pw === "你的新密碼") {   // ← 你要的密碼
-        location.href = "control.html";
-      } else {
-        alert("密碼錯誤");
-      }
+    if (pw === "你的新密碼") {   // ← 改成你要的密碼
+      sessionStorage.setItem("authed", "1");  // 只在本次分頁有效
+      location.href = "control.html";
+    } else {
+      alert("密碼錯誤");
     }
-  </script>
-</body>
-</html>
+  }
+</script>
