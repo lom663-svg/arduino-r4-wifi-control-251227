@@ -19,6 +19,11 @@
       font-size: 24px;
       margin-top: 30px;
     }
+    .hint {
+      font-size: 14px;
+      opacity: 0.7;
+      margin-top: 10px;
+    }
   </style>
 </head>
 <body>
@@ -29,43 +34,154 @@
 <button onclick="send('OFF')">OFF</button>
 
 <div id="status">狀態：連線中…</div>
+<div class="hint" id="hint"></div>
 
 <script>
-  // 沒有通過 login 就不允許進入 control
+  // ------------------------------------------------------------
+  // 1) 沒有通過 login 就不允許進入 control
+  // ------------------------------------------------------------
   if (sessionStorage.getItem("authed") !== "1") {
     location.href = "login.html";
   } else {
-    // 立刻清掉，確保「每次都要輸密碼」
+    // 清掉，確保「每次都要輸密碼」
     sessionStorage.removeItem("authed");
   }
-  // ====== MQTT 設定（下一步我會帶你改）======
+
+  // ------------------------------------------------------------
+  // 2) MQTT 設定
+  // ------------------------------------------------------------
   const client = mqtt.connect(
     "wss://eff983c75d384110b87c02b1020eeb9d.s1.eu.hivemq.cloud:8884/mqtt",
     {
       username: "Bourne",
       password: "Wm771815",
-      clientId: "web_" + Math.random().toString(16).substr(2, 8)
+      clientId: "web_" + Math.random().toString(16).substr(2, 8),
+      keepalive: 30,
+      reconnectPeriod: 2000,  // 斷線後每 2 秒重連
+      connectTimeout: 8000
     }
   );
 
-  const CMD_TOPIC   = "device/led1/cmd";
-  const STATE_TOPIC = "device/led1/state";
+  // ------------------------------------------------------------
+  // 3) Topics
+  // ------------------------------------------------------------
+  const CMD_TOPIC    = "device/led1/cmd";
+  const STATE_TOPIC  = "device/led1/state";         // ON/OFF（retain）
+  const AVAIL_TOPIC  = "device/led1/availability";  // ONLINE/OFFLINE（retain）
 
+  // ------------------------------------------------------------
+  // 4) UI 狀態管理（避免 OFFLINE 時被 retain 的 OFF 騙）
+  // ------------------------------------------------------------
+  let deviceOnline = null;      // null=未知, true=ONLINE, false=OFFLINE
+  let lastState = null;         // "ON"/"OFF"（僅在 ONLINE 時顯示）
+  let lastAvail = null;         // "ONLINE"/"OFFLINE"
+
+  function renderStatus() {
+    const statusEl = document.getElementById("status");
+    const hintEl = document.getElementById("hint");
+
+    // 網頁端還沒連上 broker
+    if (!client.connected) {
+      statusEl.innerText = "狀態：網頁未連線";
+      hintEl.innerText = "（正在嘗試重新連線…）";
+      return;
+    }
+
+    // 已連上 broker，但還沒收到設備 availability
+    if (deviceOnline === null) {
+      statusEl.innerText = "狀態：已連線（等待設備狀態…）";
+      hintEl.innerText = "";
+      return;
+    }
+
+    // 設備離線：固定顯示離線，不顯示 ON/OFF
+    if (deviceOnline === false) {
+      statusEl.innerText = "狀態：離線";
+      hintEl.innerText = "（設備未連線到 MQTT / 或已斷線）";
+      return;
+    }
+
+    // 設備在線：才顯示 ON/OFF（如果 state 還沒到，就顯示 ONLINE）
+    if (deviceOnline === true) {
+      if (lastState) {
+        statusEl.innerText = "狀態：" + lastState;
+        hintEl.innerText = "";
+      } else {
+        statusEl.innerText = "狀態：ONLINE";
+        hintEl.innerText = "（等待 ON/OFF 狀態…）";
+      }
+    }
+  }
+
+  // ------------------------------------------------------------
+  // 5) MQTT 事件
+  // ------------------------------------------------------------
   client.on("connect", () => {
-    document.getElementById("status").innerText = "狀態：已連線";
-    client.subscribe(STATE_TOPIC);
+    // 只代表網頁連上 broker，不代表設備在線
+    deviceOnline = null;
+    lastState = null;
+    lastAvail = null;
+
+    client.subscribe([STATE_TOPIC, AVAIL_TOPIC], (err) => {
+      if (err) {
+        console.log("Subscribe error:", err);
+      }
+      renderStatus();
+    });
   });
 
+  // 網頁端斷線/重連提示
+  client.on("reconnect", () => {
+    renderStatus();
+  });
+
+  client.on("offline", () => {
+    renderStatus();
+  });
+
+  client.on("close", () => {
+    renderStatus();
+  });
+
+  client.on("error", (err) => {
+    console.log("MQTT error:", err);
+    renderStatus();
+  });
+
+  // 收到訊息
   client.on("message", (topic, message) => {
+    const msg = message.toString();
+
+    // 先處理 availability（ONLINE/OFFLINE）
+    if (topic === AVAIL_TOPIC) {
+      lastAvail = msg;
+      if (msg === "ONLINE") deviceOnline = true;
+      else if (msg === "OFFLINE") deviceOnline = false;
+      else deviceOnline = null; // 不預期值
+
+      // 一旦 OFFLINE，就不要被 retain 的 state 更新畫面
+      renderStatus();
+      return;
+    }
+
+    // state（ON/OFF）只有在設備 ONLINE 時才採用
     if (topic === STATE_TOPIC) {
-      document.getElementById("status").innerText =
-        "狀態：" + message.toString();
+      if (deviceOnline === true) {
+        lastState = msg; // ON / OFF
+      }
+      renderStatus();
     }
   });
 
+  // ------------------------------------------------------------
+  // 6) 發送指令（設備 OFFLINE 時也可送，但通常沒效果）
+  // ------------------------------------------------------------
   function send(cmd) {
     client.publish(CMD_TOPIC, cmd);
   }
+
+  // 初始渲染
+  renderStatus();
 </script>
 
 </body>
